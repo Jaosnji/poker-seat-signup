@@ -104,6 +104,8 @@
   .btn-primary:hover { background: #ff6b81; transform: translateY(-2px); }
   .btn-secondary { background: #3a3a5c; color: #e0e0e0; }
   .btn-secondary:hover { background: #4a4a70; transform: translateY(-2px); }
+  .btn-admin { background: #f59e0b; color: #1a1a2e; }
+  .btn-admin:hover { background: #fbbf24; transform: translateY(-2px); }
   .btn:active { transform: scale(0.97); }
 
   .status {
@@ -116,6 +118,7 @@
   }
   .status.ok { color: #4ade80; }
   .status.warn { color: #facc15; }
+  .status.error { color: #ef4444; }
 
   .info {
     margin-top: 20px;
@@ -125,6 +128,32 @@
     line-height: 2;
   }
   .info strong { color: #666; }
+
+  .admin-panel {
+    margin-top: 20px;
+    padding: 16px;
+    border: 1px solid #3a3a5c;
+    border-radius: 12px;
+    background: #16213e;
+    display: none;
+    max-width: 400px;
+    width: 100%;
+  }
+  .admin-panel.show { display: block; }
+  .admin-panel h3 { font-size: 13px; color: #f59e0b; margin-bottom: 12px; }
+  .admin-panel input {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #3a3a5c;
+    border-radius: 8px;
+    background: #1a1a2e;
+    color: #fff;
+    font-size: 13px;
+    margin-bottom: 10px;
+  }
+  .admin-panel .btn { width: 100%; margin-top: 4px; }
+
+  .loading { opacity: 0.5; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -177,7 +206,7 @@
 </svg>
 
 <!-- 9个座位：位置标签在上，填名字在下 -->
-<div class="seats-wrap">
+<div class="seats-wrap" id="seatsWrap">
   <div class="seat-card">
     <div class="pos-badge">1</div>
     <div class="pos-label">庄家位</div>
@@ -227,10 +256,17 @@
 
 <div class="btns">
   <button class="btn btn-primary" onclick="confirmSeats()">✅ 确认报名</button>
-  <button class="btn btn-secondary" onclick="resetAll()">🔄 重置</button>
+  <button class="btn btn-admin" onclick="toggleAdmin()">🔐 管理</button>
+  <button class="btn btn-secondary" onclick="loadSeats()">🔄 刷新</button>
 </div>
 
 <p class="status" id="status"></p>
+
+<div class="admin-panel" id="adminPanel">
+  <h3>🔐 管理员重置</h3>
+  <input type="password" id="adminPassword" placeholder="输入管理员密码">
+  <button class="btn btn-admin" onclick="resetAll()">🗑️ 清空所有报名</button>
+</div>
 
 <div class="info">
   <strong>桌位说明</strong><br>
@@ -241,14 +277,37 @@
 <script>
 const inputs = document.querySelectorAll('input[data-pos]');
 const statusEl = document.getElementById('status');
+const seatsWrap = document.getElementById('seatsWrap');
+const adminPanel = document.getElementById('adminPanel');
 
-inputs.forEach(inp => {
-  inp.addEventListener('input', () => {
-    inp.classList.toggle('filled', !!inp.value.trim());
-  });
-});
+const API = '/api/seats';
 
-function confirmSeats() {
+// 加载报名数据
+async function loadSeats() {
+  seatsWrap.classList.add('loading');
+  try {
+    const res = await fetch(API);
+    const seats = await res.json();
+    inputs.forEach(inp => {
+      const pos = inp.dataset.pos;
+      const found = seats.find(s => s.pos == pos);
+      if (found) {
+        inp.value = found.name;
+        inp.classList.add('filled');
+      } else {
+        inp.value = '';
+        inp.classList.remove('filled');
+      }
+    });
+  } catch (e) {
+    statusEl.textContent = '⚠️ 网络异常，请检查网络';
+    statusEl.className = 'status warn';
+  }
+  seatsWrap.classList.remove('loading');
+}
+
+// 报名
+async function confirmSeats() {
   const filled = Array.from(inputs)
     .filter(v => v.value.trim())
     .map(v => ({ pos: v.dataset.pos, name: v.value.trim() }));
@@ -259,17 +318,78 @@ function confirmSeats() {
     return;
   }
 
-  filled.sort((a, b) => parseInt(a.pos) - parseInt(b.pos));
-  const list = filled.map(v => `${v.pos}号位：${v.name}`).join('　|　');
-  statusEl.textContent = `✅ 已确认 ${filled.length} 人报名：${list}`;
-  statusEl.className = 'status ok';
+  seatsWrap.classList.add('loading');
+  statusEl.textContent = '提交中...';
+  statusEl.className = 'status';
+
+  try {
+    // 逐个报名
+    for (const seat of filled) {
+      await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(seat),
+      });
+    }
+    // 重新加载显示
+    await loadSeats();
+    const list = filled.map(v => `${v.pos}号位：${v.name}`).join('　|　');
+    statusEl.textContent = `✅ 已确认 ${filled.length} 人报名：${list}`;
+    statusEl.className = 'status ok';
+  } catch (e) {
+    statusEl.textContent = '❌ 提交失败，请重试';
+    statusEl.className = 'status error';
+    seatsWrap.classList.remove('loading');
+  }
 }
 
-function resetAll() {
-  inputs.forEach(v => { v.value = ''; v.classList.remove('filled'); });
-  statusEl.textContent = '';
-  statusEl.className = 'status';
+// 重置（管理员）
+async function resetAll() {
+  const password = document.getElementById('adminPassword').value;
+  if (!password) {
+    statusEl.textContent = '请输入管理员密码';
+    statusEl.className = 'status warn';
+    return;
+  }
+  if (!confirm('确定要清空所有报名吗？此操作不可恢复！')) return;
+
+  try {
+    const res = await fetch(API, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (res.status === 403) {
+      statusEl.textContent = '❌ 管理员密码错误';
+      statusEl.className = 'status error';
+      return;
+    }
+    await loadSeats();
+    statusEl.textContent = '✅ 已清空所有报名';
+    statusEl.className = 'status ok';
+    adminPanel.classList.remove('show');
+  } catch (e) {
+    statusEl.textContent = '❌ 重置失败，请重试';
+    statusEl.className = 'status error';
+  }
 }
+
+// 切换管理面板
+function toggleAdmin() {
+  adminPanel.classList.toggle('show');
+  if (adminPanel.classList.contains('show')) {
+    document.getElementById('adminPassword').focus();
+  }
+}
+
+inputs.forEach(inp => {
+  inp.addEventListener('input', () => {
+    inp.classList.toggle('filled', !!inp.value.trim());
+  });
+});
+
+// 启动时加载数据
+loadSeats();
 </script>
 
 </body>
