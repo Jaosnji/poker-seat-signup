@@ -1,0 +1,6 @@
+name = "poker-seat-signup"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "SEATS_KV"
+id = "a6229ce582884deaa8c7fe12255b1ce7"
